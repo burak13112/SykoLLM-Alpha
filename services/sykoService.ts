@@ -6,7 +6,7 @@ import { GoogleGenAI } from "@google/genai";
 // ============================================================================
 
 const CUSTOM_MODEL_CONFIG = {
-  baseURL: "https://requires-once-henry-summit.trycloudflare.com/v1",
+  baseURL: "https://atlantic-appear-optics-tub.trycloudflare.com/v1",
   modelId: "Qwen_Qwen3-0.6Be", 
   apiKey: "EMPTY" 
 };

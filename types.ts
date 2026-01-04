@@ -20,7 +20,7 @@ export interface ModelConfig {
   name: string;
   tag: string; // e.g., ALPHA, BETA
   description: string;
-  supportsImages: boolean; // New flag
+  supportsImages: boolean; // Vision support flag
 }
 
 export enum Theme {
@@ -33,8 +33,15 @@ export interface UserWallet {
   proCredits: number; // Purchased extra messages for Pro model
 }
 
+export interface ModelUsage {
+  text: number;
+  imageGen: number;
+  vision: number;
+}
+
 export interface DailyUsage {
   date: string; // YYYY-MM-DD
-  proCount: number;
-  imageCount: number;
+  v25: ModelUsage;
+  pro: ModelUsage;
+  super: ModelUsage;
 }

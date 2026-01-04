@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Message, ChatSession, ModelConfig, Theme, UserWallet, DailyUsage } from './types';
+import { Message, ChatSession, ModelConfig, Theme, UserWallet, DailyUsage, ModelUsage } from './types';
 import { streamResponse, generateSykoImage } from './services/sykoService';
 import { Icons } from './components/Icon';
 import { ModelSelector } from './components/ModelSelector';
 import { ChatMessage } from './components/ChatMessage';
+import { Toast } from './components/Toast';
 
 // Web Speech API & Google Auth Types extension
 declare global {
@@ -14,23 +15,37 @@ declare global {
   }
 }
 
+// 🤖 MODEL CONFIGURATION
 const MODELS: ModelConfig[] = [
-  { id: 'syko-v2.5', name: 'SykoLLM', tag: 'V2.5', description: 'Smart & Fast (Supports Vision)', supportsImages: true },
-  { id: 'syko-v3-pro', name: 'SykoLLM', tag: 'PRO', description: 'High Reasoning (Supports Vision)', supportsImages: true },
-  { id: 'syko-native', name: 'Syko NATIVE', tag: 'LOCAL', description: 'Encrypted Tunnel (Text Only)', supportsImages: false },
+  { id: 'syko-v2.5', name: 'SykoLLM', tag: 'V2.5', description: 'Smart & Fast', supportsImages: true },
+  { id: 'syko-v3-pro', name: 'SykoLLM', tag: 'PRO', description: 'High Reasoning (Flash)', supportsImages: true },
+  { id: 'syko-super-pro', name: 'SykoLLM', tag: 'SUPER PRO', description: 'Deep Logic (Pro)', supportsImages: true },
+  { id: 'syko-native', name: 'Syko NATIVE', tag: 'LOCAL', description: 'Encrypted Tunnel', supportsImages: false },
 ];
 
 // 🔒 GÜVENLİK AYARLARI
 const ALLOWED_ADMIN_IP = "78.163.111.69";
 
-// 💰 EKONOMİ AYARLARI
-const DAILY_LIMIT_PRO = 10;
-const DAILY_LIMIT_IMAGE = 1;
+// 💰 EKONOMİ VE LİMİT AYARLARI
+const LIMITS = {
+  v25: { text: 15, imageGen: 2, vision: 2 },
+  pro: { text: 10, imageGen: 1, vision: 1 },
+  super: { text: 1, imageGen: 1, vision: 1 }
+};
+
 const PACKAGES = [
   { credits: 10, price: 50 },
   { credits: 20, price: 100 },
   { credits: 60, price: 350 },
 ];
+
+// Varsayılan boş kullanım objesi
+const DEFAULT_USAGE: DailyUsage = {
+  date: new Date().toISOString().split('T')[0],
+  v25: { text: 0, imageGen: 0, vision: 0 },
+  pro: { text: 0, imageGen: 0, vision: 0 },
+  super: { text: 0, imageGen: 0, vision: 0 }
+};
 
 export default function App() {
   // Privacy State
@@ -50,7 +65,7 @@ export default function App() {
   const [fullName, setFullName] = useState('');
   const [authError, setAuthError] = useState('');
   
-  // Login Info State (New)
+  // Login Info State
   const [showLoginInfo, setShowLoginInfo] = useState(false);
 
   // App State
@@ -62,11 +77,14 @@ export default function App() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isTyping, setIsTyping] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [limitError, setLimitError] = useState<{show: boolean, type: 'pro' | 'image' | 'api', resetTime?: string}>({show: false, type: 'api'});
+  
+  // Notification State
+  const [limitError, setLimitError] = useState<{show: boolean, msg: string}>({show: false, msg: ''});
+  const [toast, setToast] = useState<{message: string, type: 'error' | 'success'} | null>(null);
   
   // Wallet & Shop State
   const [wallet, setWallet] = useState<UserWallet>({ balance: 0, proCredits: 0 });
-  const [usage, setUsage] = useState<DailyUsage>({ date: new Date().toISOString().split('T')[0], proCount: 0, imageCount: 0 });
+  const [usage, setUsage] = useState<DailyUsage>(DEFAULT_USAGE);
   const [isShopOpen, setIsShopOpen] = useState(false);
   const [shopTab, setShopTab] = useState<'credits' | 'deposit'>('credits');
   const [depositAmount, setDepositAmount] = useState<number>(50);
@@ -138,10 +156,10 @@ export default function App() {
       const parsedUsage = JSON.parse(storedUsage);
       const today = new Date().toISOString().split('T')[0];
       if (parsedUsage.date !== today) {
-        // Reset daily limits if new day
-        setUsage({ date: today, proCount: 0, imageCount: 0 });
+        setUsage({ ...DEFAULT_USAGE, date: today });
       } else {
-        setUsage(parsedUsage);
+        // Ensure structure compatibility if updated
+        setUsage({ ...DEFAULT_USAGE, ...parsedUsage });
       }
     }
 
@@ -193,7 +211,7 @@ export default function App() {
     }
   }, []);
 
-  // RE-RENDER GOOGLE BUTTON WHEN VIEW APPEARS
+  // RE-RENDER GOOGLE BUTTON
   useEffect(() => {
     if (privacyAccepted && !user) {
       setTimeout(() => {
@@ -218,66 +236,78 @@ export default function App() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // --- WALLET & USAGE LOGIC ---
-  const checkLimits = (type: 'pro' | 'image'): boolean => {
-    // Reset check just in case
+  // --- 🚦 LIMIT CONTROLLER ---
+  const checkLimits = (action: 'text' | 'imageGen' | 'vision'): boolean => {
     const today = new Date().toISOString().split('T')[0];
     if (usage.date !== today) {
-      setUsage({ date: today, proCount: 0, imageCount: 0 });
+      setUsage({ ...DEFAULT_USAGE, date: today });
       return true;
     }
 
-    if (type === 'image') {
-      if (usage.imageCount >= DAILY_LIMIT_IMAGE) {
-        setLimitError({ show: true, type: 'image' });
-        return false;
+    // Native model has no strict limits in this code, only API capability
+    if (currentModel === 'syko-native') return true;
+
+    let modelKey: 'v25' | 'pro' | 'super' = 'v25';
+    if (currentModel === 'syko-v3-pro') modelKey = 'pro';
+    if (currentModel === 'syko-super-pro') modelKey = 'super';
+
+    const currentUsage = usage[modelKey][action];
+    const maxLimit = LIMITS[modelKey][action];
+
+    if (currentUsage >= maxLimit) {
+      // Check for extra credits ONLY for text messages on PRO/SUPER (optional logic, sticking to strict limits for now or allowing wallet override)
+      if (action === 'text' && (modelKey === 'pro' || modelKey === 'super') && wallet.proCredits > 0) {
+          return true;
       }
-    } else if (type === 'pro') {
-      // Logic: Use Daily Free Limit first, then use Purchased Credits
-      if (usage.proCount < DAILY_LIMIT_PRO) {
-        return true;
-      } else if (wallet.proCredits > 0) {
-        return true;
-      } else {
-        setLimitError({ show: true, type: 'pro' });
-        return false;
-      }
+      
+      let msg = "Günlük limit aşıldı.";
+      if (action === 'text') msg = `${currentModel} için günlük mesaj limitiniz (${maxLimit}) doldu.`;
+      if (action === 'imageGen') msg = `${currentModel} için günlük görsel üretme limitiniz (${maxLimit}) doldu.`;
+      if (action === 'vision') msg = `${currentModel} için günlük görsel inceleme limitiniz (${maxLimit}) doldu.`;
+      
+      setLimitError({ show: true, msg });
+      return false;
     }
+
     return true;
   };
 
-  const consumeLimit = (type: 'pro' | 'image') => {
+  const consumeLimit = (action: 'text' | 'imageGen' | 'vision') => {
     const today = new Date().toISOString().split('T')[0];
     let newUsage = { ...usage };
-    let newWallet = { ...wallet };
 
     if (newUsage.date !== today) {
-      newUsage = { date: today, proCount: 0, imageCount: 0 };
+      newUsage = { ...DEFAULT_USAGE, date: today };
     }
 
-    if (type === 'image') {
-      newUsage.imageCount += 1;
-    } else if (type === 'pro') {
-      if (newUsage.proCount < DAILY_LIMIT_PRO) {
-        newUsage.proCount += 1;
-      } else {
-        // Consume credit
-        newWallet.proCredits = Math.max(0, newWallet.proCredits - 1);
-        setWallet(newWallet);
-      }
+    if (currentModel === 'syko-native') return;
+
+    let modelKey: 'v25' | 'pro' | 'super' = 'v25';
+    if (currentModel === 'syko-v3-pro') modelKey = 'pro';
+    if (currentModel === 'syko-super-pro') modelKey = 'super';
+
+    // Consume logic
+    if (action === 'text' && (modelKey === 'pro' || modelKey === 'super') && newUsage[modelKey].text >= LIMITS[modelKey].text) {
+        // Use wallet credits if daily limit reached
+        if (wallet.proCredits > 0) {
+            setWallet(prev => ({...prev, proCredits: prev.proCredits - 1}));
+        }
+    } else {
+        newUsage[modelKey][action] += 1;
     }
+    
     setUsage(newUsage);
   };
 
+  // --- HANDLERS ---
   const handleDeposit = (e: React.FormEvent) => {
     e.preventDefault();
     setIsProcessingPayment(true);
-    // Simulate API delay
     setTimeout(() => {
       setWallet(prev => ({ ...prev, balance: prev.balance + depositAmount }));
       setIsProcessingPayment(false);
       setShopTab('credits');
-      setCcNumber(''); setCcName(''); setCcExpiry(''); setCcCvv(''); // Clear form
+      setCcNumber(''); setCcName(''); setCcExpiry(''); setCcCvv(''); 
       alert(`Başarılı! ${depositAmount} TL cüzdanınıza eklendi.`);
     }, 2000);
   };
@@ -295,7 +325,6 @@ export default function App() {
     alert(`${pkg.credits} Mesaj Kredisi hesabınıza tanımlandı.`);
   };
 
-  // --- EXISTING LOGIC ---
   const handlePrivacySubmit = () => { if (privacyCheckbox) { localStorage.setItem('syko_privacy_consent', 'true'); setPrivacyAccepted(true); } };
   
   const handleCustomAuth = (e: React.FormEvent) => {
@@ -325,17 +354,21 @@ export default function App() {
     if (isListening && recognitionRef.current) { recognitionRef.current.stop(); setIsListening(false); }
     if ((!input.trim() && selectedImages.length === 0) || isTyping) return;
 
-    // CHECK LIMITS BEFORE SENDING
+    // --- CHECK LIMITS BEFORE ACTION ---
     if (isImageGenMode) {
-      if (!checkLimits('image')) return;
-    } else if (currentModel === 'syko-v3-pro') {
-      if (!checkLimits('pro')) return;
+      if (!checkLimits('imageGen')) return;
+    } else {
+      // Normal chat OR vision
+      if (selectedImages.length > 0) {
+         if (!checkLimits('vision')) return;
+      }
+      if (!checkLimits('text')) return;
     }
 
     const currentInput = input.trim();
     setInput('');
     setIsTyping(true);
-    setLimitError({show: false, type: 'api'});
+    setLimitError({show: false, msg: ''});
     
     const userMsg: Message = {
       id: Date.now().toString(),
@@ -353,12 +386,14 @@ export default function App() {
 
     if (isImageGenMode) {
       try {
-        const result = await generateSykoImage(currentInput, imagesToProcess);
-        consumeLimit('image'); // Deduct limit on success
+        const result = await generateSykoImage(currentModel, currentInput, imagesToProcess);
+        consumeLimit('imageGen');
         const aiMsg: Message = { id: (Date.now() + 1).toString(), role: 'model', content: result.text || "Generated:", images: result.images, timestamp: Date.now() };
         setMessages(prev => [...prev, aiMsg]);
       } catch (error: any) {
-        setMessages(prev => [...prev, { id: Date.now().toString(), role: 'model', content: error.message, timestamp: Date.now(), isError: true }]);
+        // HATA OLUŞURSA ARTIK TOAST GÖSTERİLİYOR
+        // Chat geçmişine hata mesajı eklenmiyor!
+        setToast({ message: error.message, type: 'error' });
       } finally {
         setIsTyping(false);
         setIsImageGenMode(false);
@@ -373,9 +408,10 @@ export default function App() {
       
       let hasConsumed = false;
       await streamResponse(currentModel, newMessages, (chunk) => {
-        // Only deduct on first successful chunk to avoid charging for failed requests
-        if (!hasConsumed && currentModel === 'syko-v3-pro') {
-          consumeLimit('pro');
+        // Only deduct on first successful chunk
+        if (!hasConsumed) {
+          consumeLimit('text');
+          if (imagesToProcess.length > 0) consumeLimit('vision');
           hasConsumed = true;
         }
         setMessages(prev => prev.map(msg => msg.id === aiMsgId ? { ...msg, content: msg.content + chunk } : msg));
@@ -383,10 +419,12 @@ export default function App() {
     } catch (error: any) {
        if (error.name === 'AbortError') return;
        setMessages(prev => prev.filter(m => m.content !== ''));
+       
        if (error.message.toLowerCase().includes('429') || error.message.toLowerCase().includes('quota')) {
-         setLimitError({show: true, type: 'api'});
+         setLimitError({show: true, msg: "API Kotası Aşıldı (429)"});
        } else {
-         setMessages(prev => [...prev, { id: Date.now().toString(), role: 'model', content: error.message, timestamp: Date.now(), isError: true }]);
+         // HATA DURUMUNDA ARTIK TOAST GÖSTER
+         setToast({ message: error.message, type: 'error' });
        }
     } finally {
       setIsTyping(false);
@@ -394,7 +432,7 @@ export default function App() {
     }
   };
 
-  // --- VIEW 0: PRIVACY (Same as before) ---
+  // --- VIEW 0: PRIVACY (Existing Code) ---
   if (!privacyAccepted) {
      return (
       <div className="fixed inset-0 z-[1000] bg-black flex items-center justify-center p-4 backdrop-blur-3xl">
@@ -426,193 +464,71 @@ export default function App() {
     );
   }
 
-  // --- VIEW 1: LOGIN (Modified with STATIC WALLPAPER) ---
+  // --- VIEW 1: LOGIN (Existing Code) ---
   if (!user) {
     return (
       <div className="h-screen flex flex-col items-center justify-center p-4 text-white overflow-hidden relative bg-black">
-        {/* 🪐 Static High-Res Wallpaper (Interstellar Gargantua) */}
-        <div 
-          className="absolute inset-0 z-0"
-          style={{
-            backgroundImage: "url('https://4kwallpapers.com/images/wallpapers/gargantua-black-5200x3250-9659.jpg')",
-            backgroundSize: 'cover',
-            backgroundPosition: 'center',
-            backgroundRepeat: 'no-repeat'
-          }}
-        />
-        {/* Dark overlay for text readability - REMOVED BLUR */}
+        <div className="absolute inset-0 z-0" style={{ backgroundImage: "url('https://4kwallpapers.com/images/wallpapers/gargantua-black-5200x3250-9659.jpg')", backgroundSize: 'cover', backgroundPosition: 'center', backgroundRepeat: 'no-repeat' }} />
         <div className="absolute inset-0 z-0 bg-black/30" />
-        
-        {/* Container width and spacing reduced */}
         <div className="relative z-10 w-full max-w-sm animate-slide-up">
           <div className="text-center mb-6">
-            <div className="w-16 h-16 bg-white rounded-2xl mx-auto mb-4 flex items-center justify-center shadow-[0_0_50px_rgba(255,255,255,0.3)]">
-              <Icons.Cpu size={32} className="text-black" />
-            </div>
+            <div className="w-16 h-16 bg-white rounded-2xl mx-auto mb-4 flex items-center justify-center shadow-[0_0_50px_rgba(255,255,255,0.3)]"><Icons.Cpu size={32} className="text-black" /></div>
             <h1 className="text-3xl font-black tracking-tighter mb-1 drop-shadow-lg">SykoLLM</h1>
             <p className="text-white/60 text-[10px] uppercase tracking-[0.3em] font-mono drop-shadow-md">Secure Enterprise Gateway</p>
           </div>
-          
           <div className="bg-syko-gray/80 border border-white/10 p-6 rounded-3xl backdrop-blur-xl shadow-2xl">
-            {/* Tabs */}
             <div className="flex bg-black/30 p-1 rounded-xl mb-4">
-              <button 
-                onClick={() => {setAuthMode('login'); setAuthError('');}} 
-                className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${authMode === 'login' ? 'bg-white text-black shadow-lg' : 'text-white/40 hover:text-white'}`}
-              >
-                GİRİŞ YAP
-              </button>
-              <button 
-                onClick={() => {setAuthMode('register'); setAuthError('');}} 
-                className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${authMode === 'register' ? 'bg-white text-black shadow-lg' : 'text-white/40 hover:text-white'}`}
-              >
-                KAYDOL
-              </button>
+              <button onClick={() => {setAuthMode('login'); setAuthError('');}} className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${authMode === 'login' ? 'bg-white text-black shadow-lg' : 'text-white/40 hover:text-white'}`}>GİRİŞ YAP</button>
+              <button onClick={() => {setAuthMode('register'); setAuthError('');}} className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${authMode === 'register' ? 'bg-white text-black shadow-lg' : 'text-white/40 hover:text-white'}`}>KAYDOL</button>
             </div>
-
-            {/* Form */}
             <form onSubmit={handleCustomAuth} className="space-y-3">
-              {authMode === 'register' && (
-                <div className="space-y-1">
-                  <label className="text-[10px] uppercase font-bold text-white/40 ml-1">İsim Soyisim</label>
-                  <input 
-                    type="text" 
-                    value={fullName}
-                    onChange={(e) => setFullName(e.target.value)}
-                    className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-white/40 transition-colors"
-                    placeholder="Adınız..."
-                  />
-                </div>
-              )}
-              
-              <div className="space-y-1">
-                <label className="text-[10px] uppercase font-bold text-white/40 ml-1">E-Posta</label>
-                <input 
-                  type="email" 
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-white/40 transition-colors"
-                  placeholder="mail@ornek.com"
-                />
-              </div>
-
-              <div className="space-y-1">
-                <label className="text-[10px] uppercase font-bold text-white/40 ml-1">Şifre</label>
-                <input 
-                  type="password" 
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-white/40 transition-colors"
-                  placeholder="••••••••"
-                />
-              </div>
-
-              {authError && (
-                <div className="text-red-500 text-xs font-bold text-center bg-red-500/10 py-2 rounded-lg border border-red-500/20">
-                  {authError}
-                </div>
-              )}
-
-              <button type="submit" className="w-full bg-white text-black font-bold py-3 rounded-xl hover:bg-gray-200 transition-colors mt-1 text-sm">
-                {authMode === 'login' ? 'GİRİŞ YAP' : 'HESAP OLUŞTUR'}
-              </button>
+              {authMode === 'register' && (<div className="space-y-1"><label className="text-[10px] uppercase font-bold text-white/40 ml-1">İsim Soyisim</label><input type="text" value={fullName} onChange={(e) => setFullName(e.target.value)} className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-white/40 transition-colors" placeholder="Adınız..." /></div>)}
+              <div className="space-y-1"><label className="text-[10px] uppercase font-bold text-white/40 ml-1">E-Posta</label><input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-white/40 transition-colors" placeholder="mail@ornek.com" /></div>
+              <div className="space-y-1"><label className="text-[10px] uppercase font-bold text-white/40 ml-1">Şifre</label><input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-white/40 transition-colors" placeholder="••••••••" /></div>
+              {authError && (<div className="text-red-500 text-xs font-bold text-center bg-red-500/10 py-2 rounded-lg border border-red-500/20">{authError}</div>)}
+              <button type="submit" className="w-full bg-white text-black font-bold py-3 rounded-xl hover:bg-gray-200 transition-colors mt-1 text-sm">{authMode === 'login' ? 'GİRİŞ YAP' : 'HESAP OLUŞTUR'}</button>
             </form>
-
-            <div className="relative my-4">
-               <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-white/10"></div></div>
-               <div className="relative flex justify-center text-xs uppercase"><span className="bg-[#1a1a1a] px-2 text-white/30">veya</span></div>
-            </div>
-
-            {/* Google Button Container */}
+            <div className="relative my-4"><div className="absolute inset-0 flex items-center"><div className="w-full border-t border-white/10"></div></div><div className="relative flex justify-center text-xs uppercase"><span className="bg-[#1a1a1a] px-2 text-white/30">veya</span></div></div>
             <div id="google-btn" className="flex justify-center google-btn-container min-h-[44px] w-full overflow-hidden mb-2" />
-            
-            {/* ❓ Neden bunu görüyorum? */}
-            <div className="flex flex-col items-center">
-               <button 
-                 onClick={() => setShowLoginInfo(!showLoginInfo)}
-                 className="text-[10px] text-white/40 hover:text-white underline decoration-dotted decoration-white/20 hover:decoration-white transition-all flex items-center gap-1"
-               >
-                 Neden bunu görüyorum?
-                 <Icons.ChevronDown size={10} className={`transform transition-transform ${showLoginInfo ? 'rotate-180' : ''}`} />
-               </button>
-               {showLoginInfo && (
-                  <div className="mt-2 text-[10px] text-green-400 bg-green-500/10 px-3 py-2 rounded-lg border border-green-500/20 animate-slide-up w-full text-center">
-                    Yasal gereklilik ve kullanıcı güvenliği için.
-                  </div>
-               )}
-            </div>
-            
-            {/* DEMO / BYPASS BUTTON */}
-            {canShowDevButton && (
-              <div className="flex flex-col items-center gap-3 animate-fade-in border-t border-white/10 pt-4 mt-4">
-                <button 
-                  onClick={handleDemoLogin}
-                  className="w-full bg-green-500/10 hover:bg-green-500 text-green-500 hover:text-black font-bold font-mono text-xs px-4 py-2.5 rounded-xl transition-all flex items-center justify-center gap-2 border border-green-500/20 hover:border-green-500 shadow-[0_0_15px_rgba(34,197,94,0.1)] hover:shadow-[0_0_20px_rgba(34,197,94,0.4)] active:scale-95"
-                >
-                  <Icons.Terminal size={16} />
-                  <span>GELİŞTİRİCİ GİRİŞİ YAP</span>
-                </button>
-              </div>
-            )}
+            <div className="flex flex-col items-center"><button onClick={() => setShowLoginInfo(!showLoginInfo)} className="text-[10px] text-white/40 hover:text-white underline decoration-dotted decoration-white/20 hover:decoration-white transition-all flex items-center gap-1">Neden bunu görüyorum?<Icons.ChevronDown size={10} className={`transform transition-transform ${showLoginInfo ? 'rotate-180' : ''}`} /></button>{showLoginInfo && (<div className="mt-2 text-[10px] text-green-400 bg-green-500/10 px-3 py-2 rounded-lg border border-green-500/20 animate-slide-up w-full text-center">Yasal gereklilik ve kullanıcı güvenliği için.</div>)}</div>
+            {canShowDevButton && (<div className="flex flex-col items-center gap-3 animate-fade-in border-t border-white/10 pt-4 mt-4"><button onClick={handleDemoLogin} className="w-full bg-green-500/10 hover:bg-green-500 text-green-500 hover:text-black font-bold font-mono text-xs px-4 py-2.5 rounded-xl transition-all flex items-center justify-center gap-2 border border-green-500/20 hover:border-green-500 shadow-[0_0_15px_rgba(34,197,94,0.1)] hover:shadow-[0_0_20px_rgba(34,197,94,0.4)] active:scale-95"><Icons.Terminal size={16} /><span>GELİŞTİRİCİ GİRİŞİ YAP</span></button></div>)}
           </div>
         </div>
       </div>
     );
   }
 
-  // --- VIEW 2: VERIFICATION (Same as before) ---
+  // --- VIEW 2: VERIFICATION (Existing Code) ---
   if (isVerifying) {
-    const steps = [
-      { id: 1, name: "Edge / Gateway Authorization", detail: "Checking IP & Rate Limits...", icon: <Icons.Globe size={24} /> },
-      { id: 2, name: "Authentication Protocol", detail: "Validating Credentials...", icon: <Icons.Shield size={24} /> },
-      { id: 3, name: "Backend Security Sync", detail: "Establishing Handshake...", icon: <Icons.Lock size={24} /> },
-      { id: 4, name: "AI API Token Grant", detail: "Finalizing Session...", icon: <Icons.Cpu size={24} /> }
-    ];
-    return (
-      <div className="h-screen bg-black flex flex-col items-center justify-center p-6 text-white font-mono">
-        <div className="w-full max-w-sm space-y-8">
-          <div className="text-center space-y-2 mb-12"><h2 className="text-xl font-bold tracking-widest uppercase animate-pulse">Establishing Link</h2><p className="text-xs text-white/40">Routing through Syko Security Layers...</p></div>
-          <div className="space-y-6">{steps.map((step, i) => (<div key={step.id} className={`flex items-center gap-4 transition-all duration-500 transform ${verifyStep >= step.id ? 'opacity-100 translate-x-0' : 'opacity-20 translate-x-4'}`}><div className={`p-3 rounded-xl transition-colors duration-300 ${verifyStep > step.id ? 'bg-green-500 text-black shadow-[0_0_15px_rgba(34,197,94,0.6)]' : (verifyStep === step.id ? 'bg-white text-black animate-pulse' : 'bg-white/5 text-white/50')}`}>{step.icon}</div><div className="flex-1"><div className="flex justify-between items-center"><div className="text-[10px] uppercase opacity-40">Layer 0{step.id}</div>{verifyStep > step.id && <span className="text-green-500 text-[10px] font-bold tracking-wider">SECURE</span>}</div><div className="text-sm font-bold">{step.name}</div>{verifyStep === step.id && <div className="text-[10px] text-white/60 mt-1">{step.detail}</div>}</div></div>))}</div>
-          <div className="pt-12 text-center"><div className="h-1 w-full bg-white/10 rounded-full overflow-hidden"><div className="h-full bg-green-500 transition-all duration-1000 ease-linear" style={{width: `${(verifyStep/4)*100}%`}} /></div><div className="mt-2 text-[10px] text-white/30">{Math.min(100, Math.round((verifyStep/4)*100))}% COMPLETED</div></div>
-        </div>
-      </div>
-    );
+    const steps = [{ id: 1, name: "Edge / Gateway Authorization", detail: "Checking IP & Rate Limits...", icon: <Icons.Globe size={24} /> }, { id: 2, name: "Authentication Protocol", detail: "Validating Credentials...", icon: <Icons.Shield size={24} /> }, { id: 3, name: "Backend Security Sync", detail: "Establishing Handshake...", icon: <Icons.Lock size={24} /> }, { id: 4, name: "AI API Token Grant", detail: "Finalizing Session...", icon: <Icons.Cpu size={24} /> }];
+    return (<div className="h-screen bg-black flex flex-col items-center justify-center p-6 text-white font-mono"><div className="w-full max-w-sm space-y-8"><div className="text-center space-y-2 mb-12"><h2 className="text-xl font-bold tracking-widest uppercase animate-pulse">Establishing Link</h2><p className="text-xs text-white/40">Routing through Syko Security Layers...</p></div><div className="space-y-6">{steps.map((step, i) => (<div key={step.id} className={`flex items-center gap-4 transition-all duration-500 transform ${verifyStep >= step.id ? 'opacity-100 translate-x-0' : 'opacity-20 translate-x-4'}`}><div className={`p-3 rounded-xl transition-colors duration-300 ${verifyStep > step.id ? 'bg-green-500 text-black shadow-[0_0_15px_rgba(34,197,94,0.6)]' : (verifyStep === step.id ? 'bg-white text-black animate-pulse' : 'bg-white/5 text-white/50')}`}>{step.icon}</div><div className="flex-1"><div className="flex justify-between items-center"><div className="text-[10px] uppercase opacity-40">Layer 0{step.id}</div>{verifyStep > step.id && <span className="text-green-500 text-[10px] font-bold tracking-wider">SECURE</span>}</div><div className="text-sm font-bold">{step.name}</div>{verifyStep === step.id && <div className="text-[10px] text-white/60 mt-1">{step.detail}</div>}</div></div>))}</div><div className="pt-12 text-center"><div className="h-1 w-full bg-white/10 rounded-full overflow-hidden"><div className="h-full bg-green-500 transition-all duration-1000 ease-linear" style={{width: `${(verifyStep/4)*100}%`}} /></div><div className="mt-2 text-[10px] text-white/30">{Math.min(100, Math.round((verifyStep/4)*100))}% COMPLETED</div></div></div></div>);
   }
 
   // --- VIEW 3: MAIN APP (CHAT) ---
   return (
     <div className="flex h-screen overflow-hidden bg-white dark:bg-black text-black dark:text-white font-sans">
       
-      {/* 🛑 LIMIT ERROR MODAL */}
+      {/* 🔔 TOAST NOTIFICATION */}
+      {toast && (
+        <Toast 
+          message={toast.message} 
+          type={toast.type} 
+          onClose={() => setToast(null)} 
+        />
+      )}
+
+      {/* 🛑 LIMIT ERROR MODAL (Sadece Kota Dolduğunda) */}
       {limitError.show && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-black/80 backdrop-blur-md animate-fade-in">
           <div className="bg-white dark:bg-syko-gray border border-black/10 dark:border-white/10 w-full max-w-md rounded-3xl p-8 shadow-2xl animate-slide-up text-center relative overflow-hidden">
              <div className="absolute top-0 left-0 right-0 h-2 bg-gradient-to-r from-red-500 via-orange-500 to-red-500" />
              <div className="w-20 h-20 bg-red-500/10 text-red-600 dark:text-red-500 rounded-full flex items-center justify-center mx-auto mb-6 ring-4 ring-red-500/5"><Icons.Alert size={36} /></div>
              
-             {limitError.type === 'pro' && (
-                <>
-                  <h2 className="text-3xl font-black mb-4 tracking-tight">PRO LİMİTİ DOLDU</h2>
-                  <p className="text-sm text-gray-700 dark:text-gray-300 leading-relaxed font-medium mb-6">SykoLLM Pro modeli için günlük 10 mesaj hakkınız dolmuştur. Devam etmek için kredi satın alabilir veya yarını bekleyebilirsiniz.</p>
-                  <button onClick={() => {setLimitError({show:false, type: 'pro'}); setIsShopOpen(true);}} className="w-full py-4 bg-black dark:bg-white text-white dark:text-black rounded-2xl font-bold mb-3 hover:scale-[1.02] active:scale-[0.98] transition-all">MAĞAZAYI AÇ</button>
-                </>
-             )}
-             
-             {limitError.type === 'image' && (
-                <>
-                  <h2 className="text-3xl font-black mb-4 tracking-tight">GÖRSEL LİMİTİ DOLDU</h2>
-                  <p className="text-sm text-gray-700 dark:text-gray-300 leading-relaxed font-medium mb-6">Günlük 1 adet görsel üretme hakkınızı kullandınız. Lütfen yarın tekrar deneyin.</p>
-                </>
-             )}
+             <h2 className="text-3xl font-black mb-4 tracking-tight">LİMİT DOLDU</h2>
+             <p className="text-sm text-gray-700 dark:text-gray-300 leading-relaxed font-medium mb-6">{limitError.msg}</p>
 
-             {limitError.type === 'api' && (
-                <>
-                  <h2 className="text-3xl font-black mb-4 tracking-tight">SUNUCU YOĞUNLUĞU</h2>
-                  <p className="text-sm text-gray-700 dark:text-gray-300 leading-relaxed font-medium mb-6">Şu anda sunucularımızda aşırı yoğunluk yaşanıyor (Error 429). Lütfen kısa bir süre sonra tekrar deneyin.</p>
-                </>
-             )}
-
-             <button onClick={() => setLimitError({show: false, type: 'api'})} className="text-xs font-bold opacity-50 hover:opacity-100 mt-2">KAPAT</button>
+             <button onClick={() => {setLimitError({show:false, msg: ''}); setIsShopOpen(true);}} className="w-full py-4 bg-black dark:bg-white text-white dark:text-black rounded-2xl font-bold mb-3 hover:scale-[1.02] active:scale-[0.98] transition-all">MAĞAZAYI AÇ</button>
+             <button onClick={() => setLimitError({show: false, msg: ''})} className="text-xs font-bold opacity-50 hover:opacity-100 mt-2">KAPAT</button>
           </div>
         </div>
       )}
@@ -663,7 +579,7 @@ export default function App() {
                              </div>
                           </div>
                        ))}
-                       <p className="col-span-full text-center text-[10px] text-white/30 mt-4">Krediler sadece SykoLLM Pro modelinde geçerlidir. Standart model ücretsizdir.</p>
+                       <p className="col-span-full text-center text-[10px] text-white/30 mt-4">Krediler sadece PRO ve SUPER PRO modellerinde geçerlidir.</p>
                     </div>
                  ) : (
                     <div className="flex flex-col items-center justify-center h-full text-center p-8 space-y-6 animate-fade-in">
@@ -673,11 +589,8 @@ export default function App() {
                        <div className="space-y-2">
                            <h3 className="text-xl font-black text-white uppercase tracking-wider">ÖDEME SİSTEMİ KAPALI</h3>
                            <p className="text-sm text-gray-400 max-w-sm mx-auto leading-relaxed">
-                               ödeme Sistemi geçiçi olarak kapalıdır. ödeme altyapısı şu anda geliştirme / test (beta) aşamasındadır. yakında güvenli ve sorunsuz şekilde aktif edilecektir. ilginiz için teşekkürler.
+                               ödeme Sistemi geçiçi olarak kapalıdır. ödeme altyapısı şu anda geliştirme / test (beta) aşamasındadır.
                            </p>
-                       </div>
-                       <div className="px-4 py-2 bg-white/5 rounded-lg border border-white/10 text-[10px] font-mono text-white/30 uppercase">
-                           Status: Dev_Build_v0.9
                        </div>
                    </div>
                  )}
@@ -774,8 +687,12 @@ export default function App() {
                 ))}
               </div>
               <div className="mt-8 text-xs text-gray-400">
-                 <p className="mb-1">Daily Limits: <b>{DAILY_LIMIT_PRO - usage.proCount}</b> Pro Msgs Left • <b>{DAILY_LIMIT_IMAGE - usage.imageCount}</b> Images Left</p>
-                 {wallet.proCredits > 0 && <p className="text-green-500 font-bold">Extra Credits: {wallet.proCredits}</p>}
+                  <p className="mb-1 text-center font-bold opacity-70">Daily Limit Status</p>
+                  <div className="flex justify-center gap-6 text-[10px]">
+                      <div>V2.5: {LIMITS.v25.text - usage.v25.text} Left</div>
+                      <div>PRO: {LIMITS.pro.text - usage.pro.text} Left</div>
+                      <div>SUPER: {LIMITS.super.text - usage.super.text} Left</div>
+                  </div>
               </div>
             </div>
           ) : (

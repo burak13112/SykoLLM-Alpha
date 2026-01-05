@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { Message } from '../types';
 import { Icons } from './Icon';
@@ -9,70 +9,91 @@ interface ChatMessageProps {
 
 export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
   const isUser = message.role === 'user';
-  const [isExpanded, setIsExpanded] = useState(false);
+  const [isExpanded, setIsExpanded] = useState(true); // Default to open while thinking
   
-  // Parsing Logic for <think> blocks
-  // Regex kullanarak daha sağlam bir ayrıştırma yapıyoruz.
-  const parseContent = (content: string) => {
-    const thinkRegex = /<think>([\s\S]*?)<\/think>/;
-    const match = content.match(thinkRegex);
-    
-    if (match) {
-      const thought = match[1].trim();
-      const actualResponse = content.replace(thinkRegex, '').trim();
-      return { hasThought: true, thought, content: actualResponse, isThinking: false };
+  // Düşünce bittiğinde otomatik kapatmak için effect
+  useEffect(() => {
+    if (!message.content.includes('<think>') || message.content.includes('</think>')) {
+        // Düşünce yoksa veya bittiyse varsayılan kapalı olsun (kullanıcı isterse açsın)
+        // Ancak ilk render'da animasyon için statik bırakıyoruz, bu sadece state reset için.
+        // setIsExpanded(false); -> Bunu yaparsak akış sırasında sürekli kapanır, gerek yok.
     }
-    
-    // Eğer tag henüz kapanmadıysa (Streaming hali)
-    if (content.includes('<think>') && !content.includes('</think>')) {
-       const thoughtStart = content.indexOf('<think>') + 7;
-       const thought = content.substring(thoughtStart).trim();
-       return { hasThought: true, thought, content: '', isThinking: true };
+  }, [message.content]);
+
+  // Parsing Logic
+  const parseContent = (rawContent: string) => {
+    let thought = "";
+    let content = rawContent;
+    let hasThought = false;
+    let isThinking = false;
+
+    const startTag = "<think>";
+    const endTag = "</think>";
+
+    if (rawContent.includes(startTag)) {
+      hasThought = true;
+      const startIndex = rawContent.indexOf(startTag) + startTag.length;
+      
+      if (rawContent.includes(endTag)) {
+        // Düşünce tamamlanmış
+        const endIndex = rawContent.indexOf(endTag);
+        thought = rawContent.substring(startIndex, endIndex).trim();
+        content = rawContent.substring(endIndex + endTag.length).trim();
+        isThinking = false;
+      } else {
+        // Düşünce hala akıyor (Streaming)
+        thought = rawContent.substring(startIndex).trim();
+        content = ""; // Henüz cevap yok, sadece düşünüyor
+        isThinking = true;
+      }
     }
 
-    return { hasThought: false, thought: '', content: content, isThinking: false };
+    return { hasThought, thought, content, isThinking };
   };
 
   const { hasThought, thought, content, isThinking } = parseContent(message.content);
 
+  // Eğer kullanıcı mesajıysa direkt render et
+  if (isUser) {
+    return (
+        <div className="w-full animate-slide-up bg-transparent">
+            <div className="max-w-3xl mx-auto py-8 px-4 md:px-6 flex gap-4 md:gap-6">
+                <div className="shrink-0 w-8 h-8 rounded-lg bg-black text-white dark:bg-white dark:text-black flex items-center justify-center">
+                    <Icons.Terminal size={16} />
+                </div>
+                <div className="flex-1 min-w-0 space-y-2">
+                    <div className="font-bold text-sm tracking-wide">YOU</div>
+                    {message.images && message.images.length > 0 && (
+                        <div className="flex flex-wrap gap-2 mb-3">
+                        {message.images.map((img, i) => (
+                            <img key={i} src={img} className="max-h-64 rounded-xl border border-black/10 dark:border-white/10" />
+                        ))}
+                        </div>
+                    )}
+                    <div className="prose prose-sm md:prose-base dark:prose-invert max-w-none leading-relaxed whitespace-pre-wrap">
+                        {message.content}
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+  }
+
+  // Model mesajı için özel render
   return (
-    <div className={`w-full animate-slide-up ${isUser ? 'bg-transparent' : 'bg-black/5 dark:bg-white/5 border-y border-black/5 dark:border-white/5'}`}>
+    <div className="w-full animate-slide-up bg-black/5 dark:bg-white/5 border-y border-black/5 dark:border-white/5">
       <div className="max-w-3xl mx-auto py-8 px-4 md:px-6 flex gap-4 md:gap-6">
-        <div className={`shrink-0 w-8 h-8 rounded-lg flex items-center justify-center ${
-          isUser 
-            ? 'bg-black text-white dark:bg-white dark:text-black' 
-            : 'bg-gradient-to-br from-gray-700 to-black text-white dark:from-gray-200 dark:to-white dark:text-black'
-        }`}>
-          {isUser ? <Icons.Terminal size={16} /> : <Icons.Cpu size={16} />}
+        <div className="shrink-0 w-8 h-8 rounded-lg bg-gradient-to-br from-gray-700 to-black text-white dark:from-gray-200 dark:to-white dark:text-black flex items-center justify-center">
+          <Icons.Cpu size={16} />
         </div>
 
         <div className="flex-1 min-w-0 space-y-2 overflow-hidden">
           <div className="flex items-center gap-2 mb-1">
-            <span className="font-bold text-sm tracking-wide">
-              {isUser ? 'YOU' : 'SYKO LLM'}
-            </span>
-            {!isUser && (
-              <span className="text-[10px] bg-red-600 text-white px-1 rounded font-bold uppercase">
-                ALPHA
-              </span>
-            )}
+            <span className="font-bold text-sm tracking-wide">SYKO LLM</span>
+            <span className="text-[10px] bg-red-600 text-white px-1 rounded font-bold uppercase">ALPHA</span>
           </div>
           
-          {/* DISPLAY IMAGES IF ATTACHED */}
-          {message.images && message.images.length > 0 && (
-            <div className="flex flex-wrap gap-2 mb-3">
-              {message.images.map((img, i) => (
-                <img 
-                  key={i} 
-                  src={img} 
-                  alt="Attachment" 
-                  className="max-h-64 rounded-xl border border-black/10 dark:border-white/10 shadow-sm"
-                />
-              ))}
-            </div>
-          )}
-          
-          {/* THINKING MODULE UI - TERMINAL STYLE */}
+          {/* THINKING MODULE */}
           {hasThought && (
             <div className="mb-6 mt-2">
               <button 
@@ -86,9 +107,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
                 <span className={`font-bold ${isThinking ? "animate-pulse text-indigo-500 dark:text-indigo-400" : "text-gray-500 dark:text-gray-400"}`}>
                   {isThinking ? "GENERATING THOUGHT PROCESS..." : "THOUGHT PROCESS"}
                 </span>
-                {!isThinking && (
-                  <div className="h-px bg-black/10 dark:bg-white/10 flex-1 ml-2"></div>
-                )}
+                {!isThinking && <div className="h-px bg-black/10 dark:bg-white/10 flex-1 ml-2"></div>}
               </button>
               
               {(isExpanded || isThinking) && (
@@ -105,7 +124,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
           {/* MAIN CONTENT */}
           <div className={`prose prose-sm md:prose-base dark:prose-invert max-w-none leading-relaxed prose-p:my-1 prose-pre:bg-black/10 dark:prose-pre:bg-black prose-pre:rounded-lg ${message.isError ? 'text-red-500 font-medium' : ''}`}>
              <ReactMarkdown>{content}</ReactMarkdown>
-             {!content && !isThinking && hasThought && (
+             {!content && !isThinking && !hasThought && (
                <span className="animate-pulse inline-block w-2 h-4 bg-current align-middle ml-1"></span>
              )}
           </div>

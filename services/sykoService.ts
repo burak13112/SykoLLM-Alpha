@@ -5,11 +5,11 @@ import { Message } from '../types';
 // ============================================================================
 
 const SHARED_THINKING_PROTOCOL = `
-    🧠 THOUGHT PROCESS PROTOCOL:
-    1. TRIGGER: You MUST start your response with the <think> tag.
-    2. RANGE: Keep your thinking process strictly between 128 and 1024 tokens.
-    3. SOFT BRAKE (early_stop=True): As soon as a logical conclusion is reached, STOP thinking. Do not over-analyze. Close with </think> immediately.
-    4. FORMAT: <think>...reasoning...</think> ...final response...
+    IMPORTANT: You are a reasoning model.
+    1. ALWAYS Output your thought process inside <think> and </think> tags first.
+    2. The <think> block must be the VERY FIRST part of your response.
+    3. Keep thoughts concise (128-1024 tokens).
+    4. Once you have the answer, close with </think> and provide the response.
 `;
 
 const NATURAL_LANGUAGE_PROTOCOL = `
@@ -37,24 +37,15 @@ const SYSTEM_PROMPTS: Record<string, string> = {
     Identity: The most advanced, deep-reasoning AI entity in the system.
     ${NATURAL_LANGUAGE_PROTOCOL}
     ${SHARED_THINKING_PROTOCOL}
-    Note: Demonstrate superior logic and creativity. Always show your reasoning within tags.
   `,
   'syko-coder': `
     You are SykoLLM Coder (powered by Qwen Coder).
     Identity: An expert software engineer and debugger.
     ${NATURAL_LANGUAGE_PROTOCOL}
     ${SHARED_THINKING_PROTOCOL}
-    Note: Provide clean, efficient, and well-commented code. Think about the architecture first inside tags.
+    Note: Plan your code architecture inside <think> tags first.
   `
 };
-
-// ============================================================================
-// 🖼️ GÖRSEL ÜRETİM SERVİSİ (SYKO VISION MODE)
-// ============================================================================
-// NOTE: Görsel üretimi için şimdilik mevcut yapıyı koruyoruz veya devre dışı bırakıyoruz.
-// Kullanıcı isteğinde sadece chat modellerinin OpenRouter'a geçmesi istendi.
-// Ancak import hatası olmaması için bu fonksiyonu mock (yer tutucu) olarak bırakıyorum
-// veya basit bir hata fırlatıcı yapıyorum. İleride OpenRouter image API eklenebilir.
 
 export const generateSykoImage = async (modelId: string, prompt: string, referenceImages?: string[]): Promise<{ text: string, images: string[] }> => {
   throw new Error("Görsel üretim servisi bakım modundadır. Lütfen Chat modunu kullanın.");
@@ -72,7 +63,6 @@ export const streamResponse = async (
   images?: string[] 
 ): Promise<string> => {
 
-  // 1. Model ve API Anahtarı Eşleşmesi
   let openRouterModel = "";
   let apiKey = "";
   let systemPrompt = SYSTEM_PROMPTS['syko-v2.5'];
@@ -102,90 +92,58 @@ export const streamResponse = async (
       throw new Error("Geçersiz Model ID");
   }
 
-  if (!apiKey) {
-    throw new Error(`API Anahtarı eksik! (${modelId} için key bulunamadı)`);
-  }
+  if (!apiKey) throw new Error(`API Anahtarı eksik! (${modelId})`);
 
-  // 2. Mesaj Formatını Hazırla
-  const messages: any[] = [
-    { role: "system", content: systemPrompt }
-  ];
+  const messages: any[] = [{ role: "system", content: systemPrompt }];
 
-  // Geçmiş mesajları ekle
-  // Son mesaj hariç hepsini text olarak ekle
   for (let i = 0; i < history.length - 1; i++) {
-    const msg = history[i];
     messages.push({
-      role: msg.role === 'model' ? 'assistant' : 'user',
-      content: msg.content
+      role: history[i].role === 'model' ? 'assistant' : 'user',
+      content: history[i].content
     });
   }
 
-  // Son mesajı ve varsa resimleri ekle
   const lastMsg = history[history.length - 1];
   
   if (images && images.length > 0) {
-    // OpenRouter Vision Format
-    const contentArray: any[] = [
-      { type: "text", text: lastMsg.content }
-    ];
-    
-    images.forEach(img => {
-      contentArray.push({
-        type: "image_url",
-        image_url: {
-          url: img // Data URL (base64) desteklenir
-        }
-      });
-    });
-
-    messages.push({
-      role: "user",
-      content: contentArray
-    });
+    const contentArray: any[] = [{ type: "text", text: lastMsg.content }];
+    images.forEach(img => contentArray.push({ type: "image_url", image_url: { url: img } }));
+    messages.push({ role: "user", content: contentArray });
   } else {
-    messages.push({
-      role: "user",
-      content: lastMsg.content
-    });
+    messages.push({ role: "user", content: lastMsg.content });
   }
 
-  // 3. Fetch İsteği (OpenRouter)
   try {
     const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: {
         "Authorization": `Bearer ${apiKey}`,
         "Content-Type": "application/json",
-        "HTTP-Referer": window.location.href, // OpenRouter best practice
+        "HTTP-Referer": window.location.href,
         "X-Title": "SykoLLM Web"
       },
       body: JSON.stringify({
         model: openRouterModel,
         messages: messages,
         stream: true,
-        // Model spesifik parametreler (isteğe bağlı)
-        temperature: 0.7,
-        max_tokens: 4096,
-        include_reasoning: true // DeepSeek ve diğer reasoning modelleri için
+        temperature: 0.6,
+        include_reasoning: true // ÖNEMLİ: DeepSeek için reasoning talep et
       }),
       signal: signal
     });
 
-    if (!response.ok) {
-      const errText = await response.text();
-      let errMsg = `OpenRouter Error (${response.status}): ${errText}`;
-      if (response.status === 429) errMsg = "OpenRouter Kotası Aşıldı (429). Biraz bekleyin.";
-      throw new Error(errMsg);
-    }
-
+    if (!response.ok) throw new Error(`API Error: ${response.status}`);
     if (!response.body) throw new Error("Empty response body");
 
-    // 4. Streaming Okuma
     const reader = response.body.getReader();
     const decoder = new TextDecoder("utf-8");
+    
     let fullText = "";
     let buffer = "";
+    
+    // Reasoning State Management
+    let hasStartedThinking = false;
+    let hasFinishedThinking = false;
 
     while (true) {
       const { done, value } = await reader.read();
@@ -198,30 +156,61 @@ export const streamResponse = async (
       for (const line of lines) {
         const trimmed = line.trim();
         if (!trimmed.startsWith("data: ")) continue;
-        
         const dataStr = trimmed.slice(6);
         if (dataStr === "[DONE]") continue;
 
         try {
           const json = JSON.parse(dataStr);
-          const content = json.choices?.[0]?.delta?.content || "";
+          const delta = json.choices?.[0]?.delta;
           
-          // DeepSeek R1 gibi modeller bazen <think> tag'ini content içinde gönderir.
-          // OnChunk ile UI'a akıtıyoruz.
-          if (content) {
-            fullText += content;
-            onChunk(content);
+          if (!delta) continue;
+
+          // 1. Düşünce Akışı (Reasoning)
+          // OpenRouter bazen 'reasoning' bazen 'content' içinde <think> gönderir.
+          // Biz 'reasoning' alanını kontrol edip manuel <think> ekliyoruz.
+          const reasoningChunk = delta.reasoning; 
+          
+          if (reasoningChunk) {
+            if (!hasStartedThinking) {
+               // İlk kez düşünce geldi, etiketi aç
+               onChunk("<think>");
+               fullText += "<think>";
+               hasStartedThinking = true;
+            }
+            onChunk(reasoningChunk);
+            fullText += reasoningChunk;
+            continue; // Reasoning varsa content bekleme, sonraki satıra geç
           }
-        } catch (e) {
-          // JSON parse hatası veya boş chunk, yoksay
-        }
+
+          // 2. Normal İçerik (Content)
+          const contentChunk = delta.content || "";
+          
+          if (contentChunk) {
+            // Eğer daha önce düşünüyorduk ama şimdi content geldi ve henüz etiketi kapatmadıysak:
+            if (hasStartedThinking && !hasFinishedThinking) {
+                onChunk("</think>");
+                fullText += "</think>";
+                hasFinishedThinking = true;
+            }
+            
+            onChunk(contentChunk);
+            fullText += contentChunk;
+          }
+
+        } catch (e) { }
       }
+    }
+    
+    // Döngü bittiğinde hala düşünce açıksa kapat
+    if (hasStartedThinking && !hasFinishedThinking) {
+        onChunk("</think>");
+        fullText += "</think>";
     }
 
     return fullText;
 
   } catch (error: any) {
     if (error.name === 'AbortError') return "[ABORTED]";
-    throw new Error(error.message || "Bilinmeyen bağlantı hatası.");
+    throw new Error(error.message || "Bağlantı hatası.");
   }
 };

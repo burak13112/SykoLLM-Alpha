@@ -31,6 +31,8 @@ const SYSTEM_PROMPTS: Record<string, string> = {
     You are SykoLLM PRO (powered by Xiaomi Mimo).
     Identity: A highly intelligent, balanced AI entity.
     ${NATURAL_LANGUAGE_PROTOCOL}
+    ${SHARED_THINKING_PROTOCOL}
+    Note: You must Analyze the query inside <think> tags first.
   `,
   'syko-super-pro': `
     You are SykoLLM SUPER PRO (powered by DeepSeek R1).
@@ -84,7 +86,7 @@ export const streamResponse = async (
       systemPrompt = SYSTEM_PROMPTS['syko-super-pro'];
       break;
     case 'syko-coder':
-      openRouterModel = "kwaipilot/kat-coder-pro:free";
+      openRouterModel = "qwen/qwen3-coder:free";
       apiKey = process.env.API_KEY3 || "";
       systemPrompt = SYSTEM_PROMPTS['syko-coder'];
       break;

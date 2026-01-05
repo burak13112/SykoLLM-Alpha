@@ -1,4 +1,4 @@
-import { Message } from '../types.ts';
+import { Message } from '../types';
 
 // ============================================================================
 // 🧠 SYKO PERSONA AYARLARI
@@ -129,7 +129,7 @@ export const streamResponse = async (
         messages: messages,
         stream: true,
         temperature: 0.6,
-        include_reasoning: true 
+        include_reasoning: true // ÖNEMLİ: DeepSeek için reasoning talep et
       }),
       signal: signal
     });
@@ -168,7 +168,8 @@ export const streamResponse = async (
           if (!delta) continue;
 
           // 1. Düşünce Akışı (Reasoning)
-          // DeepSeek R1 gibi modeller 'reasoning' alanını kullanır.
+          // OpenRouter bazen 'reasoning' bazen 'content' içinde <think> gönderir.
+          // Biz 'reasoning' alanını kontrol edip manuel <think> ekliyoruz.
           const reasoningChunk = delta.reasoning; 
           
           if (reasoningChunk) {
@@ -180,7 +181,7 @@ export const streamResponse = async (
             }
             onChunk(reasoningChunk);
             fullText += reasoningChunk;
-            continue; 
+            continue; // Reasoning varsa content bekleme, sonraki satıra geç
           }
 
           // 2. Normal İçerik (Content)

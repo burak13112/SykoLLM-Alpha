@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
-import { Message } from '../types.ts';
+import { Message } from '../types';
 import { Icons } from './Icon';
 
 interface ChatMessageProps {
@@ -9,15 +9,15 @@ interface ChatMessageProps {
 
 export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
   const isUser = message.role === 'user';
-  const [isExpanded, setIsExpanded] = useState(true); 
+  const [isExpanded, setIsExpanded] = useState(true); // Default to open while thinking
   
-  // Düşünce bittiğinde (yani tag kapandığında), kutuyu otomatik kapatmak yerine
-  // kullanıcı deneyimi için açık bırakabiliriz veya kapatabiliriz.
-  // Ancak streaming sırasında açık olması önemlidir.
-  // Effect ile sadece içerik değiştiğinde kontrol yapıyoruz.
+  // Düşünce bittiğinde otomatik kapatmak için effect
   useEffect(() => {
-     // İsteğe bağlı: Düşünce bittiğinde otomatik kapatmak isterseniz burayı açabilirsiniz.
-     // Şimdilik "Thinking..." yazısı gidip "Thought Process"e dönüştüğü için açık kalması görsel olarak hoş.
+    if (!message.content.includes('<think>') || message.content.includes('</think>')) {
+        // Düşünce yoksa veya bittiyse varsayılan kapalı olsun (kullanıcı isterse açsın)
+        // Ancak ilk render'da animasyon için statik bırakıyoruz, bu sadece state reset için.
+        // setIsExpanded(false); -> Bunu yaparsak akış sırasında sürekli kapanır, gerek yok.
+    }
   }, [message.content]);
 
   // Parsing Logic

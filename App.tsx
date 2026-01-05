@@ -17,10 +17,34 @@ declare global {
 
 // 🤖 MODEL CONFIGURATION
 const MODELS: ModelConfig[] = [
-  { id: 'syko-v2.5', name: 'SykoLLM', tag: 'V2.5', description: 'Smart & Fast', supportsImages: true },
-  { id: 'syko-v3-pro', name: 'SykoLLM', tag: 'PRO', description: 'High Reasoning (Flash)', supportsImages: true },
-  { id: 'syko-super-pro', name: 'SykoLLM', tag: 'SUPER PRO', description: 'Deep Logic (Pro)', supportsImages: true },
-  { id: 'syko-native', name: 'Syko NATIVE', tag: 'LOCAL', description: 'Encrypted Tunnel', supportsImages: false },
+  { 
+    id: 'syko-v2.5', 
+    name: 'SykoLLM V2.5', 
+    tag: 'FAST', 
+    description: 'Our fast model, optimized for everyday tasks and quick responses.', 
+    supportsImages: false 
+  },
+  { 
+    id: 'syko-v3-pro', 
+    name: 'SykoLLM PRO', 
+    tag: 'SMART', 
+    description: 'Our balanced model, delivering smarter reasoning with moderate speed.', 
+    supportsImages: true 
+  },
+  { 
+    id: 'syko-super-pro', 
+    name: 'SykoLLM SUPER PRO', 
+    tag: 'O1-PREVIEW', 
+    description: 'Our most advanced reasoning model. Thinks deeply before answering complex queries.', 
+    supportsImages: false 
+  },
+  { 
+    id: 'syko-coder', 
+    name: 'SykoLLM Coder', 
+    tag: 'DEV', 
+    description: 'Specialized for programming tasks, debugging, and code generation.', 
+    supportsImages: false 
+  },
 ];
 
 // 🔒 GÜVENLİK AYARLARI
@@ -28,9 +52,10 @@ const ALLOWED_ADMIN_IP = "78.163.111.69";
 
 // 💰 EKONOMİ VE LİMİT AYARLARI
 const LIMITS = {
-  v25: { text: 15, imageGen: 2, vision: 2 },
-  pro: { text: 10, imageGen: 1, vision: 1 },
-  super: { text: 1, imageGen: 1, vision: 1 }
+  v25: { text: 20, imageGen: 2, vision: 2 },
+  pro: { text: 15, imageGen: 1, vision: 1 },
+  super: { text: 3, imageGen: 1, vision: 1 },
+  coder: { text: 5, imageGen: 0, vision: 0 }
 };
 
 const PACKAGES = [
@@ -44,7 +69,8 @@ const DEFAULT_USAGE: DailyUsage = {
   date: new Date().toISOString().split('T')[0],
   v25: { text: 0, imageGen: 0, vision: 0 },
   pro: { text: 0, imageGen: 0, vision: 0 },
-  super: { text: 0, imageGen: 0, vision: 0 }
+  super: { text: 0, imageGen: 0, vision: 0 },
+  coder: { text: 0, imageGen: 0, vision: 0 }
 };
 
 export default function App() {
@@ -244,18 +270,16 @@ export default function App() {
       return true;
     }
 
-    // Native model has no strict limits in this code, only API capability
-    if (currentModel === 'syko-native') return true;
-
-    let modelKey: 'v25' | 'pro' | 'super' = 'v25';
+    let modelKey: 'v25' | 'pro' | 'super' | 'coder' = 'v25';
     if (currentModel === 'syko-v3-pro') modelKey = 'pro';
     if (currentModel === 'syko-super-pro') modelKey = 'super';
+    if (currentModel === 'syko-coder') modelKey = 'coder';
 
     const currentUsage = usage[modelKey][action];
     const maxLimit = LIMITS[modelKey][action];
 
     if (currentUsage >= maxLimit) {
-      // Check for extra credits ONLY for text messages on PRO/SUPER (optional logic, sticking to strict limits for now or allowing wallet override)
+      // Check for extra credits ONLY for text messages on PRO/SUPER (optional logic)
       if (action === 'text' && (modelKey === 'pro' || modelKey === 'super') && wallet.proCredits > 0) {
           return true;
       }
@@ -280,11 +304,10 @@ export default function App() {
       newUsage = { ...DEFAULT_USAGE, date: today };
     }
 
-    if (currentModel === 'syko-native') return;
-
-    let modelKey: 'v25' | 'pro' | 'super' = 'v25';
+    let modelKey: 'v25' | 'pro' | 'super' | 'coder' = 'v25';
     if (currentModel === 'syko-v3-pro') modelKey = 'pro';
     if (currentModel === 'syko-super-pro') modelKey = 'super';
+    if (currentModel === 'syko-coder') modelKey = 'coder';
 
     // Consume logic
     if (action === 'text' && (modelKey === 'pro' || modelKey === 'super') && newUsage[modelKey].text >= LIMITS[modelKey].text) {
@@ -391,8 +414,6 @@ export default function App() {
         const aiMsg: Message = { id: (Date.now() + 1).toString(), role: 'model', content: result.text || "Generated:", images: result.images, timestamp: Date.now() };
         setMessages(prev => [...prev, aiMsg]);
       } catch (error: any) {
-        // HATA OLUŞURSA ARTIK TOAST GÖSTERİLİYOR
-        // Chat geçmişine hata mesajı eklenmiyor!
         setToast({ message: error.message, type: 'error' });
       } finally {
         setIsTyping(false);
@@ -423,7 +444,6 @@ export default function App() {
        if (error.message.toLowerCase().includes('429') || error.message.toLowerCase().includes('quota')) {
          setLimitError({show: true, msg: "API Kotası Aşıldı (429)"});
        } else {
-         // HATA DURUMUNDA ARTIK TOAST GÖSTER
          setToast({ message: error.message, type: 'error' });
        }
     } finally {
@@ -688,10 +708,11 @@ export default function App() {
               </div>
               <div className="mt-8 text-xs text-gray-400">
                   <p className="mb-1 text-center font-bold opacity-70">Daily Limit Status</p>
-                  <div className="flex justify-center gap-6 text-[10px]">
+                  <div className="flex flex-wrap justify-center gap-4 md:gap-6 text-[10px]">
                       <div>V2.5: {LIMITS.v25.text - usage.v25.text} Left</div>
                       <div>PRO: {LIMITS.pro.text - usage.pro.text} Left</div>
                       <div>SUPER: {LIMITS.super.text - usage.super.text} Left</div>
+                      <div>CODER: {LIMITS.coder.text - usage.coder.text} Left</div>
                   </div>
               </div>
             </div>

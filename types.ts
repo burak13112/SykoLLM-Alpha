@@ -44,4 +44,5 @@ export interface DailyUsage {
   v25: ModelUsage;
   pro: ModelUsage;
   super: ModelUsage;
+  coder: ModelUsage;
 }

@@ -8,7 +8,10 @@ export default defineConfig(({ mode }) => {
     plugins: [react()],
     define: {
       // Fallback to empty string to prevent build crashes if key is missing
-      'process.env.API_KEY': JSON.stringify(env.API_KEY || "")
+      'process.env.API_KEY': JSON.stringify(env.API_KEY || ""),
+      'process.env.API_KEY1': JSON.stringify(env.API_KEY1 || ""),
+      'process.env.API_KEY2': JSON.stringify(env.API_KEY2 || ""),
+      'process.env.API_KEY3': JSON.stringify(env.API_KEY3 || "")
     }
   }
 })

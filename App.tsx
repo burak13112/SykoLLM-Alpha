@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Message, ChatSession, ModelConfig, Theme, UserWallet, DailyUsage, ModelUsage } from './types';
+import { Message, ChatSession, ModelConfig, Theme, UserWallet, DailyUsage, ModelUsage } from './types.ts';
 import { streamResponse, generateSykoImage } from './services/sykoService';
 import { Icons } from './components/Icon';
 import { ModelSelector } from './components/ModelSelector';

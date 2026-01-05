@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { ModelConfig } from '../types';
+import { ModelConfig } from '../types.ts';
 import { Icons } from './Icon';
 
 interface ModelSelectorProps {

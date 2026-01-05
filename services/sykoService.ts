@@ -5,11 +5,11 @@ import { Message } from '../types';
 // ============================================================================
 
 const SHARED_THINKING_PROTOCOL = `
-    🧠 THOUGHT PROCESS PROTOCOL (<think>):
-    1. You have the ability to think before answering using the <think> tag (DeepSeek R1 does this natively).
-    2. SOFT LIMIT: Keep your reasoning process efficient.
-    3. BRAKE: As soon as you reach a conclusion, close with </think> and output the final response immediately.
-    4. ALWAYS use the <think> tag for complex queries or reasoning tasks to trigger the UI thinking panel if the model supports it.
+    🧠 THOUGHT PROCESS PROTOCOL:
+    1. TRIGGER: You MUST start your response with the <think> tag.
+    2. RANGE: Keep your thinking process strictly between 128 and 1024 tokens.
+    3. SOFT BRAKE (early_stop=True): As soon as a logical conclusion is reached, STOP thinking. Do not over-analyze. Close with </think> immediately.
+    4. FORMAT: <think>...reasoning...</think> ...final response...
 `;
 
 const NATURAL_LANGUAGE_PROTOCOL = `
@@ -36,13 +36,15 @@ const SYSTEM_PROMPTS: Record<string, string> = {
     You are SykoLLM SUPER PRO (powered by DeepSeek R1).
     Identity: The most advanced, deep-reasoning AI entity in the system.
     ${NATURAL_LANGUAGE_PROTOCOL}
-    Note: Demonstrate superior logic and creativity. Use <think> tags for reasoning.
+    ${SHARED_THINKING_PROTOCOL}
+    Note: Demonstrate superior logic and creativity. Always show your reasoning within tags.
   `,
   'syko-coder': `
     You are SykoLLM Coder (powered by Qwen Coder).
     Identity: An expert software engineer and debugger.
     ${NATURAL_LANGUAGE_PROTOCOL}
-    Note: Provide clean, efficient, and well-commented code. Explain logic clearly.
+    ${SHARED_THINKING_PROTOCOL}
+    Note: Provide clean, efficient, and well-commented code. Think about the architecture first inside tags.
   `
 };
 
@@ -164,7 +166,8 @@ export const streamResponse = async (
         stream: true,
         // Model spesifik parametreler (isteğe bağlı)
         temperature: 0.7,
-        max_tokens: 4096
+        max_tokens: 4096,
+        include_reasoning: true // DeepSeek ve diğer reasoning modelleri için
       }),
       signal: signal
     });
@@ -202,8 +205,9 @@ export const streamResponse = async (
         try {
           const json = JSON.parse(dataStr);
           const content = json.choices?.[0]?.delta?.content || "";
-          // DeepSeek R1 gibi modeller bazen reasoning_content field'ı kullanabilir
-          // OpenRouter genellikle bunu normal content'e dahil eder veya <think> tag'i ile verir.
+          
+          // DeepSeek R1 gibi modeller bazen <think> tag'ini content içinde gönderir.
+          // OnChunk ile UI'a akıtıyoruz.
           if (content) {
             fullText += content;
             onChunk(content);

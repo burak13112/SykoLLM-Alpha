@@ -12,19 +12,24 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
   const [isExpanded, setIsExpanded] = useState(false);
   
   // Parsing Logic for <think> blocks
+  // Regex kullanarak daha sağlam bir ayrıştırma yapıyoruz.
   const parseContent = (content: string) => {
-    const cleanContent = content.trimStart();
-    if (message.role === 'model' && cleanContent.startsWith('<think>')) {
-      const closingIndex = cleanContent.indexOf('</think>');
-      if (closingIndex !== -1) {
-        const thought = cleanContent.substring(7, closingIndex).trim();
-        const actualResponse = cleanContent.substring(closingIndex + 8).trim();
-        return { hasThought: true, thought, content: actualResponse, isThinking: false };
-      } else {
-        const thought = cleanContent.substring(7).trim();
-        return { hasThought: true, thought, content: '', isThinking: true };
-      }
+    const thinkRegex = /<think>([\s\S]*?)<\/think>/;
+    const match = content.match(thinkRegex);
+    
+    if (match) {
+      const thought = match[1].trim();
+      const actualResponse = content.replace(thinkRegex, '').trim();
+      return { hasThought: true, thought, content: actualResponse, isThinking: false };
     }
+    
+    // Eğer tag henüz kapanmadıysa (Streaming hali)
+    if (content.includes('<think>') && !content.includes('</think>')) {
+       const thoughtStart = content.indexOf('<think>') + 7;
+       const thought = content.substring(thoughtStart).trim();
+       return { hasThought: true, thought, content: '', isThinking: true };
+    }
+
     return { hasThought: false, thought: '', content: content, isThinking: false };
   };
 
@@ -67,26 +72,30 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
             </div>
           )}
           
-          {/* THINKING MODULE UI */}
+          {/* THINKING MODULE UI - TERMINAL STYLE */}
           {hasThought && (
-            <div className="mb-4 mt-2">
+            <div className="mb-6 mt-2">
               <button 
                 onClick={() => setIsExpanded(!isExpanded)}
-                className="flex items-center gap-2 text-xs font-mono uppercase tracking-widest opacity-60 hover:opacity-100 transition-opacity select-none group"
+                className="flex items-center gap-3 text-xs font-mono uppercase tracking-widest opacity-70 hover:opacity-100 transition-opacity select-none group w-full"
               >
-                {isExpanded ? <Icons.ChevronDown size={14} /> : <Icons.ChevronRight size={14} />}
-                <Icons.Brain size={14} className={isThinking ? "animate-pulse text-indigo-500" : ""} />
-                <span className={isThinking ? "animate-pulse" : ""}>
+                <div className="flex items-center gap-2 text-indigo-500 dark:text-indigo-400">
+                   {isExpanded ? <Icons.ChevronDown size={14} /> : <Icons.ChevronRight size={14} />}
+                   <Icons.Brain size={14} className={isThinking ? "animate-pulse" : ""} />
+                </div>
+                <span className={`font-bold ${isThinking ? "animate-pulse text-indigo-500 dark:text-indigo-400" : "text-gray-500 dark:text-gray-400"}`}>
                   {isThinking ? "GENERATING THOUGHT PROCESS..." : "THOUGHT PROCESS"}
                 </span>
-                {!isExpanded && !isThinking && (
-                   <span className="text-[10px] normal-case opacity-50 ml-2 tracking-normal border border-current px-1 rounded">Click to expand</span>
+                {!isThinking && (
+                  <div className="h-px bg-black/10 dark:bg-white/10 flex-1 ml-2"></div>
                 )}
               </button>
-              {isExpanded && (
-                <div className="mt-2 pl-4 border-l-2 border-black/10 dark:border-white/10 animate-fade-in">
-                  <div className="text-sm font-mono text-gray-600 dark:text-gray-400 italic leading-relaxed opacity-90 break-words whitespace-pre-wrap">
-                    {thought || <span className="opacity-50">Thinking...</span>}
+              
+              {(isExpanded || isThinking) && (
+                <div className="mt-2 pl-4 ml-1.5 border-l-2 border-indigo-500/20 dark:border-indigo-500/30 animate-fade-in">
+                  <div className="text-xs md:text-sm font-mono text-gray-600 dark:text-gray-400 leading-relaxed opacity-90 break-words whitespace-pre-wrap bg-black/5 dark:bg-black/20 p-4 rounded-r-lg rounded-bl-lg">
+                    {thought || <span className="opacity-50 animate-pulse">Initializing logic cores...</span>}
+                    {isThinking && <span className="inline-block w-2 h-4 bg-indigo-500 ml-1 animate-pulse align-middle"></span>}
                   </div>
                 </div>
               )}

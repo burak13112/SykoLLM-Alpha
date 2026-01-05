@@ -84,7 +84,7 @@ export const streamResponse = async (
       systemPrompt = SYSTEM_PROMPTS['syko-super-pro'];
       break;
     case 'syko-coder':
-      openRouterModel = "qwen/qwen3-coder:free";
+      openRouterModel = "kwaipilot/kat-coder-pro:free";
       apiKey = process.env.API_KEY3 || "";
       systemPrompt = SYSTEM_PROMPTS['syko-coder'];
       break;
